@@ -25,6 +25,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Validate version script
         run: |
@@ -41,7 +42,11 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           ssh-keyscan github.com >> ~/.ssh/known_hosts
-          printf '%s\n' "$VERSION_BUMP_SSH_KEY" | tr -d '\r' | ssh-add -
+          key_file="$(mktemp)"
+          printf '%s\n' "$VERSION_BUMP_SSH_KEY" | sed 's/\\n/\n/g' | tr -d '\r' > "$key_file"
+          chmod 600 "$key_file"
+          ssh-keygen -y -f "$key_file" >/dev/null
+          ssh-add "$key_file"
           git remote set-url origin git@github.com:felipe0328/power_mac.git
           git ls-remote origin HEAD >/dev/null
           git push --dry-run origin HEAD:main
@@ -109,14 +114,22 @@ jobs:
           fi
 
           body="$(cat "$body_file")"
-          comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"${marker}\"))) | .id" \
-            | tail -n 1)"
+          echo "$body" >> "$GITHUB_STEP_SUMMARY"
+
+          comments_file="$(mktemp)"
+          if ! gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" > "$comments_file"; then
+            echo "Could not read PR comments; version preview was written to the job summary."
+            exit 0
+          fi
+
+          comment_id="$(jq -r ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"${marker}\"))) | .id" "$comments_file" | tail -n 1)"
 
           if [[ -n "$comment_id" ]]; then
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -f body="$body" >/dev/null
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -f body="$body" >/dev/null \
+              || echo "Could not update PR comment; version preview was written to the job summary."
           else
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null \
+              || echo "Could not create PR comment; version preview was written to the job summary."
           fi
 
   bump:
@@ -128,6 +141,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Configure version bump deploy key
         env:
@@ -138,7 +152,11 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           ssh-keyscan github.com >> ~/.ssh/known_hosts
-          printf '%s\n' "$VERSION_BUMP_SSH_KEY" | tr -d '\r' | ssh-add -
+          key_file="$(mktemp)"
+          printf '%s\n' "$VERSION_BUMP_SSH_KEY" | sed 's/\\n/\n/g' | tr -d '\r' > "$key_file"
+          chmod 600 "$key_file"
+          ssh-keygen -y -f "$key_file" >/dev/null
+          ssh-add "$key_file"
           echo "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}" >> "$GITHUB_ENV"
           echo "SSH_AGENT_PID=${SSH_AGENT_PID}" >> "$GITHUB_ENV"
           git remote set-url origin git@github.com:felipe0328/power_mac.git
