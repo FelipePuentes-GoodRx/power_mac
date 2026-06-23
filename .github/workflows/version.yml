@@ -114,14 +114,22 @@ jobs:
           fi
 
           body="$(cat "$body_file")"
-          comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"${marker}\"))) | .id" \
-            | tail -n 1)"
+          echo "$body" >> "$GITHUB_STEP_SUMMARY"
+
+          comments_file="$(mktemp)"
+          if ! gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" > "$comments_file"; then
+            echo "Could not read PR comments; version preview was written to the job summary."
+            exit 0
+          fi
+
+          comment_id="$(jq -r ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"${marker}\"))) | .id" "$comments_file" | tail -n 1)"
 
           if [[ -n "$comment_id" ]]; then
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -f body="$body" >/dev/null
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -f body="$body" >/dev/null \
+              || echo "Could not update PR comment; version preview was written to the job summary."
           else
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null \
+              || echo "Could not create PR comment; version preview was written to the job summary."
           fi
 
   bump:
